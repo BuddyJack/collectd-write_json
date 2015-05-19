@@ -1,0 +1,36 @@
+#!/bin/sh 
+
+
+yum -y install http://mirror.rackcentral.com.au/epel/6/i386/epel-release-6-8.noarch.rpm
+yum -y install vim-enhanced git wget bzip2 tar python-devel perl-devel ccache ipython python-argparse pylint gitflow
+yum -y groupinstall 'Development tools'
+
+[ -f /usr/local/bin/gcc ] || ln -s `which ccache` /usr/local/bin/gcc
+[ -f /usr/local/bin/g++ ] || ln -s `which ccache` /usr/local/bin/g++
+[ -f /usr/local/bin/cc  ] || ln -s `which ccache` /usr/local/bin/cc
+[ -f /usr/local/bin/c++ ] || ln -s `which ccache` /usr/local/bin/c++
+
+cd /usr/local/src
+
+[ -d redis-collectd-plugin.git ] || mkdir redis-collectd-plugin.git
+git clone https://github.com/powdahound/redis-collectd-plugin.git redis-collectd-plugin.git
+
+
+# Install various collectd versions
+#
+#for v in 5.4.2 5.4.1 5.4.0 5.3.2 5.3.0 5.2.2; do
+for v in 5.4.2; do
+    [ -d /opt/collectd-$v ] && rm -rfv /opt/collectd-$v
+    cd /usr/local/src
+    [ -f collectd-$v.tar.bz2 ] || wget https://collectd.org/files/collectd-$v.tar.bz2
+    tar xvfj collectd-$v.tar.bz2
+    cd collectd-$v
+    ./configure --prefix=/opt/collectd-$v --with-python --config-cache --enable-debug
+    make install
+    echo "Include \"/usr/local/src/collectd-write_json/tests/test-write_json.conf\"" >> /opt/collectd-$v/etc/collectd.conf
+    # TODO cat EOF custom collectd.conf without syslog, STDOUT log and only cpu check
+    /opt/collectd-$v/sbin/collectd -t || exit 1
+done
+  
+
+
