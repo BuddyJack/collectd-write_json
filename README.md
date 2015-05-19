@@ -87,6 +87,14 @@ Requirements
 ------------
  * collectd 4.9+
 
+
+Development
+-----------
+
+I use the [gitflow](https://github.com/nvie/gitflow) Git plugin so the main development 
+branch is ```develop``` and not ```master```.
+
+
 Acknowledgements
 ----------------
 
