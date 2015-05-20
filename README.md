@@ -44,12 +44,20 @@ expected.
       Import "write_json"
 
       <Module write_json>
-          # Server "host" "port" "interface" "ttl"
-          # Server "host" "port" "ttl" "interface"
-          Server "host1.example.com" "54321"
-          Server "192.168.9.8" "12345"
-          Server "239.1.2.3" "44444" "eth0" "6"
-          Server "239.9.8.7" "43210" "5" "192.168.2.1"
+          # Paths to the types.db files are needed here(!) with any 
+          # Collectd version older than November 2014. The built-in
+          # defaults are /usr/share/collectd/types.db and
+          # /usr/local/share/collectd/types.db.
+          TypesDB "/my/custom/types.db"
+          TypesDB "/my/other/custom/types.db"
+          
+          # Send JSON over UDP:
+          # UDP "host" "port" "interface" "ttl"
+          # UDP "host" "port" "ttl" "interface"
+          UDP "host1.example.com" "54321"
+          UDP "192.168.9.8" "12345"
+          UDP "239.1.2.3" "44444" "eth0" "6"
+          UDP "239.9.8.7" "43210" "5" "192.168.2.1"
       </Module>
     </Plugin>
 ```
@@ -57,29 +65,62 @@ expected.
 JSON format
 -----------
 
-The JSON encoding follows the [Collectd JSON](https://collectd.org/wiki/index.php/JSON) structure.
+The JSON encoding follows the [Collectd JSON](https://collectd.org/wiki/index.php/JSON) structure
+(the ````min``` and ```max``` information is not included in the example shown on the
+Collectd web site but they could be easily added as additional fields).
 ```
 [
-   {
-     "values":  [1901474177],
-     "dstypes":  ["counter"],
-     "dsnames":    ["value"],
-     "time":      1280959128,
-     "interval":          10,
-     "host":            "leeloo.octo.it",
-     "plugin":          "cpu",
-     "plugin_instance": "0",
-     "type":            "cpu",
-     "type_instance":   "idle"
-   }
+    {
+        "dsnames": ['shorttem', 'midterm', 'longterm'],
+        "dstypes": ['gauge', 'gauge', 'gauge'],
+        "host": "localhost",
+        "interval": 5.0,
+        "plugin": "load",
+        "plugin_instance": "",
+        "time": 1432086959.8153536,
+        "type": "load",
+        "type_instance": "",
+        "values": [
+            0.0,
+            0.01,
+            0.050000000000000003
+        ]
+    }
 ]
 ```
+Unfortunately only very recent releases of Collectd allow Python
+based plugins to retrive the ```dsnames``` and ```dstypes``` fields
+(https://github.com/collectd/collectd/issues/771). Earlier
+versions will leave those fields empty unless the ```write_json``` configuration
+section has ```TypesDB``` entries for the data type.
+```
+[
+    {
+        "dsnames": [],
+        "dstypes": [],
+        "host": "localhost",
+        "interval": 5.0,
+        "plugin": "load",
+        "plugin_instance": "",
+        "time": 1432086959.8153536,
+        "type": "load",
+        "type_instance": "",
+        "values": [
+            0.0,
+            0.01,
+            0.050000000000000003
+        ]
+    }
+]
+```
+Individual JSON structures will be delimited by newline ```\n``` if they are emitted
+together.
 
 Future
 ------
 
 Currently only sending data as UDP packets has been implemented. The plugin could be 
-extended to write JSON to other outputs, e.g. files, UNIX sockets, databases,
+extended to write JSON data by different methods; TCP, files, UNIX sockets, databases,
 and so forth.
 
 
@@ -91,8 +132,7 @@ Requirements
 Development
 -----------
 
-I use the [gitflow](https://github.com/nvie/gitflow) Git plugin so the main development 
-branch is ```develop``` and not ```master```.
+See ```DEVELOPMENT.md``` for details.
 
 
 Acknowledgements

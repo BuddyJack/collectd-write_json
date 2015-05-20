@@ -36,30 +36,42 @@
 # collectd-python:
 #   http://collectd.org/documentation/manpages/collectd-python.5.shtml
 
+NAME = 'write_json'
+
 import collectd
 import socket
 import json
 import sys
+import time
+import re
+import threading
 
-# Enable for debugging only, will print to stderr!!!
-#DEBUG = True
+LOCK = threading.Lock()
+"""Lock for synchronising writers."""
+
+TYPES_DB = ['/usr/share/collectd/types.db', '/usr/local/share/collectd/types.db']
+"""List of paths to types.db files."""
+
+TYPES = {}
+"""Information parsed from all types.db files."""
 
 WRITERS = []
+"""List of writers (UdpWriter, ...)."""
 
-NAME = 'write_json'
 
-class UDP(object):
+class UdpWriter(object):
     """
     Send JSON inside UDP packet.
     """
 
     def __init__(self, host, port, interface=None, ttl=None):
-        collectd.debug("%s.UDP.__init__: host=%s, port=%s, interface=%s, ttl=%s" % (NAME, host, port, interface, ttl))
+        collectd.debug("%s.UdpWriter.__init__: host=%s, port=%s, interface=%s, ttl=%s" % (NAME, host, port, interface, ttl))
         self.host = host
         self.port = port
         self.interface = interface
         self.ttl = ttl
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.values_dicts = []
 
         if interface:
             # Crude test to distinguish between interface names and IP addresses.
@@ -92,10 +104,11 @@ class UDP(object):
                                  (NAME, ttl, self.host, self.port, msg))
                 # Fudge self.ttl to make self.__repr__() look better
                 self.ttl = '<invalid>'
-                
+
         
     def write(self, message):
         try:
+            collectd.debug("%s.UdpWriter.write: %s:%s %s" % (NAME, self.host, self.port, message))
             self.sock.sendto(message, (self.host, self.port))
         except socket.error, msg:
             collectd.warning("%s error sending to host %s port %d: %s" %
@@ -103,6 +116,7 @@ class UDP(object):
 
         
     def close(self):
+        collectd.debug("%s.%s.close()" % (NAME, self))
         try:
             self.sock.close()
         except socket.error:
@@ -110,73 +124,146 @@ class UDP(object):
 
     
     def __repr__(self):
-        return "UDP(host=%s, port=%d, interface=%s, ttl=%s, sock=%s" % (self.host, self.port, self.interface, self.ttl, self.sock) 
+        return "UdpWriter(host=%s, port=%d, interface=%s, ttl=%s, sock=%s)" % (self.host, self.port, self.interface, self.ttl, self.sock) 
+
+
+def read_types_db(path_to_typesdb):
+
+    global TYPES
+
+    try:
+        with open(path_to_typesdb) as fp:
+            for line in fp:
+                fields = re.split('[,\s]+', line.strip())
+
+                # Skip comments
+                if fields[0].startswith('#'):
+                    continue
+
+                name = fields[0]
+
+                if len(fields) < 2:
+                    collectd.notice("%s configuration error: %s in %s is missing definition" % (NAME, name, path_to_typesdb))
+                    continue
+
+                name = fields[0]
+
+                TYPES[name] = []
+
+                for field in fields[1:]:
+                    fields2 = field.split(':')
+
+                    if len(fields2) < 4:
+                        collectd.notice("%s configuration error: %s %s has wrong format" % (NAME, name, field))
+                        continue
+
+                    dsname = fields2[0]
+                    dstype = fields2[1].lower()
+
+                    if fields2[2] == 'U':
+                        dsmin = None
+                    else:
+                        dsmin = float(fields2[2])
+
+                    if fields2[3] == 'U':
+                        dsmax = None
+                    else:
+                        dsmax = float(fields2[3])
+
+                    TYPES[name].append((dsname, dstype, dsmin, dsmax))
+
+                collectd.debug("%s.read_types_db: TYPES[%s]=%s" % (NAME, name, TYPES[name]))
+                
+ 
+                
+
+    except IOError, msg:
+        collectd.notice("%s configuration error: %s - %s" % (NAME, path_to_typesdb, msg))
+
+
 
 def configure_callback(config):
     """Receive configuration block"""
 
     global WRITERS
+    global TYPES_DB
+
 
     for node in config.children:
         key = node.key.lower()
-
-
-        # Server "host" "port" "interface" "ttl"
-        # Server "host" "port" "ttl" "interface"
-        interface = None
-        ttl = None
-
-     
         collectd.debug("%s.configure_callback: key=%s values=%s" % (NAME, key, node.values))
 
+        if key == 'typesdb':
+            try:
+                TYPES_DB.append(node.values[0])
+            except IndexError:
+                collectd.notice("%s configuration error: path to types.db missing" % (NAME))
+                continue
 
-        # Server 
-        if key != "server":
-            collectd.notice("%s configuration error: unknown key %s, should be 'Server'" % (NAME, key))
+        elif key == 'udp':
+
+            # Server "host" "port" "interface" "ttl"
+            # Server "host" "port" "ttl" "interface"
+            #
+            interface = None
+            ttl = None
+
+
+            # host 
+            #
+            try:
+                host = node.values[0]
+            except IndexError:
+                collectd.notice("%s configuration error: host missing" % (NAME))
+                continue
+
+
+            # port
+            #
+            try:
+                port = int(node.values[1])
+            except IndexError:
+                collectd.notice("%s configuration error: port missing for host %s" % (NAME, host))
+                continue
+            except ValueError:
+                collectd.notice("%s configuration error: invalid port for host %s" % (NAME, host))
+                continue
+
+
+            # interface/ttl 
+            #
+            try:
+                ttl = int(node.values[2])
+            except ValueError:
+                interface = node.values[2]
+            except IndexError:
+                pass
+
+
+            # interface/ttl 
+            #
+            try:
+                ttl = int(node.values[3])
+            except ValueError:
+                interface = node.values[3]
+            except IndexError:
+                pass
+
+
+            WRITERS.append(UdpWriter(host, port, interface, ttl))
+
+        else:
+            collectd.notice("%s configuration error: unknown key %s" % (NAME, key))
             continue
-
-           
-        # host 
-        try:
-            host = node.values[0]
-        except IndexError:
-            collectd.notice("%s configuration error: host missing" % (NAME))
-            continue
+            
 
 
-        # port
-        try:
-            port = int(node.values[1])
-        except IndexError:
-            collectd.notice("%s configuration error: port missing for host %s" % (NAME, host))
-            continue
-        except ValueError:
-            collectd.notice("%s configuration error: invalid port for host %s" % (NAME, host))
-            continue
-
-
-        # interface/ttl 
-        try:
-            ttl = int(node.values[2])
-        except ValueError:
-            interface = node.values[2]
-        except IndexError:
-            pass
-
-
-        # interface/ttl 
-        try:
-            ttl = int(node.values[3])
-        except ValueError:
-            interface = node.values[3]
-        except IndexError:
-            pass
-
-
-        WRITERS.append(UDP(host, port, interface, ttl))
-
-
+    collectd.debug("%s.configure_callback: TYPES_DB=%s" % (NAME, TYPES_DB))
     collectd.debug("%s.configure_callback: WRITERS=%s" % (NAME, WRITERS))
+
+
+    for types_db in TYPES_DB:
+        read_types_db(types_db)
 
 
 def shutdown_callback():
@@ -184,8 +271,96 @@ def shutdown_callback():
         writer.close()
 
 
-#def write_callback():
+def write_callback(values):
+    """
+    Write values to all `WRITERS` in JSON.
 
-# register callbacks
+    :param values: Instance of `collectd.Values`.
+
+    An example of `values` is shown below. It may also contain `plugin_instance`
+    and `type_instance` attributes.
+
+      collectd.Values(type='load', plugin='load', host='localhost', time=1432083347.3517618,
+                      interval=300.0, values=[0.0, 0.01, 0.050000000000000003])
+
+    """
+
+    collectd.debug('%s.write_callback: values=%s' % (NAME, values))
+
+    # The following attributes must always be there.
+    #
+    try:
+        values_dict = {'time': values.time,
+                       'interval': values.interval,
+                       'host': values.host,
+                       'plugin': values.plugin,
+                       'type': values.type,
+                       'values': [],
+                       'dstypes': [],
+                       'dsnames': []}
+    except AttributeError, msg:
+        collectd.notice("%s values=%s: %s" % (NAME, values, msg))
+        return
+
+
+    # `plugin_instance` and `type_instance` may be present.
+    #
+    try:
+        values_dict['plugin_instance'] = values.plugin_instance
+    except AttributeError:
+        pass
+
+    try:
+        values_dict['type_instance'] = values.type_instance
+    except AttributeError:
+        pass
+
+
+    # Retrieve the data source name and type. This feature has
+    # been added only in October 2014 so it may not be available
+    # in official releases (https://github.com/collectd/collectd/issues/771).
+    #
+    definitions = None
+    try:
+        definitions = collectd.get_dataset(values.type)
+    except AttributeError:
+        #
+        # collectd.get_dataset() is not yet implemented. Try to get
+        # the nformation from TYPES which holds the information
+        # we read from types.db files.
+        #
+        try:
+            definitions = TYPES[values.type]
+        except KeyError:
+            pass
+    except TypeError, msg:
+        pass
+
+
+    # Append the actual values.
+    #
+    for (i, value) in enumerate(values.values):
+        values_dict['values'].append(value)
+
+
+        # File 'dsname' and 'dstype' if available.
+        #
+        if definitions:
+            (dsname, dstype, dsmin, dsmax) = definitions[i]
+            values_dict['dsnames'].append(dsname)
+            values_dict['dstypes'].append(dstype)
+
+    collectd.debug("%s.write_callback: values_dict=%s" % (NAME, values_dict))
+
+
+    for writer in WRITERS:
+        writer.write(json.dumps([values_dict]))
+
+
+        
+
+# Register callbacks
+#
 collectd.register_config(configure_callback)
-#collectd.register_read(read_callback)
+collectd.register_shutdown(shutdown_callback)
+collectd.register_write(write_callback)

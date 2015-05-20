@@ -1,0 +1,50 @@
+#
+# /opt/collectd-VERSION/etc/collectd.conf
+# 
+# For testing 'write_json.py'
+#
+
+# Reduce Interval for easier testing.
+#
+Interval     5
+
+# Log to stdout. Collectd has been compield with '--enable-debug'
+# do 'LogLevel debug' actually works.
+#
+LoadPlugin logfile
+<Plugin logfile>
+  LogLevel debug
+  File STDOUT
+  Timestamp true
+  PrintSeverity true
+</Plugin>
+
+# Only collect the (multi-value) system load for
+# testing.
+#
+LoadPlugin load
+
+# write_json plugin test configuration.
+#
+<LoadPlugin python>
+  Globals true
+</LoadPlugin>
+
+<Plugin python>
+  # Enable Python stack trace in Collectd logs
+  LogTraces true
+
+  # We expect to run this from the same directory
+  # where the 'write_json.py' file lives.
+  #
+  ModulePath "."
+
+  Import "write_json"
+
+  <Module write_json>
+      Server "host1.example.com" "54321"
+      Server "192.168.9.8" "12345"
+      Server "239.1.2.3" "44444" "eth0"
+  </Module>
+</Plugin>
+
