@@ -58,6 +58,115 @@ TYPES = {}
 WRITERS = []
 """List of writers (UdpWriter, ...)."""
 
+# These are re-defined at the end of this file!
+#
+WRITER_MAP = None
+FORMATTER_MAP = None
+DEFAULT_FORMATTER = None
+
+
+class BaseFormatter(object):
+
+    def convert_values_to_dict(self, values_object):
+        """
+        Convert an instance of `collectd.Values` to a dictionary.
+
+        """
+
+        # The following attributes must always be there.
+        #
+        try:
+            values_dict = {'time': values_object.time,
+                           'interval': values_object.interval,
+                           'host': values_object.host,
+                           'plugin': values_object.plugin,
+                           'type': values_object.type,
+                           'values': [],
+                           'dstype': [],
+                           'dsname': [],
+                           'dsmin': [],
+                           'dsmax': []}
+        except AttributeError, msg:
+            collectd.notice("%s values=%s: %s" % (NAME, values_object, msg))
+            return
+
+
+        # `plugin_instance` and `type_instance` may be present.
+        #
+        try:
+            values_dict['plugin_instance'] = values_object.plugin_instance
+        except AttributeError:
+            pass
+
+        try:
+            values_dict['type_instance'] = values_object.type_instance
+        except AttributeError:
+            pass
+
+
+        # Retrieve the data source name and type. This feature has
+        # been added only in October 2014 so it may not be available
+        # in official releases (https://github.com/collectd/collectd/issues/771).
+        #
+        definitions = None
+        try:
+            definitions = collectd.get_dataset(values_object.type)
+        except AttributeError:
+            #
+            # collectd.get_dataset() is not yet implemented. Try to get
+            # the nformation from TYPES which holds the information
+            # we read from types.db files.
+            #
+            try:
+                definitions = TYPES[values_object.type]
+            except KeyError:
+                pass
+        except TypeError, msg:
+            pass
+
+
+        # Append the actual values.
+        #
+        for (i, value) in enumerate(values_object.values):
+            values_dict['values'].append(value)
+
+
+            # File 'dsname' and 'dstype' if available.
+            #
+            if definitions:
+                (dsname, dstype, dsmin, dsmax) = definitions[i]
+                values_dict['dsname'].append(dsname)
+                values_dict['dstype'].append(dstype)
+                values_dict['dsmin'].append(dsmin)
+                values_dict['dsmax'].append(dsmax)
+
+        return values_dict
+
+
+class JsonFormatter(BaseFormatter):
+    def format(self, values_objects):
+        values_dicts = [self.convert_values_to_dict(values_object) for values_object in values_objects]
+        message = json.dumps(values_dicts) + '\n'
+        collectd.debug("%s.JsonFormatter.format message=%s" %(NAME, message))
+        return message
+
+
+class KeyvalFormatter(BaseFormatter):
+    template = 'time=%s host="%s" plugin="%s" plugin_instance="%s" type="%s" type_instance="%s" interval=%s value=%s dsname="%s" dstype="%s" dsmin=%s dsmax=%s\n'
+
+    def format(self, values_objects):
+        values_dicts = [self.convert_values_to_dict(values_object) for values_object in values_objects]
+
+        message = ''
+        for values_dict in values_dicts:
+            for (i, value) in enumerate(values_dict['values']):
+                message += self.template % (values_dict['time'], values_dict['host'],
+                           values_dict['plugin'], values_dict['plugin_instance'], values_dict['type'], 
+                           values_dict['type_instance'], values_dict['interval'], value, values_dict['dsname'][i],
+                           values_dict['dstype'][i], values_dict['dsmin'][i], values_dict['dsmax'][0])
+
+        return message
+
 
 class BaseWriter(threading.Thread):
     FLUSH_INTERVAL = 1.0
@@ -71,13 +180,14 @@ class BaseWriter(threading.Thread):
 
 
 
-    def __init__(self):
-        collectd.debug("%s.BaseWriter.__init__: FLUSH_INTERVAL=%s, MAX_BUFFER_SIZE=%s, MAX_FLUSH_SIZE=%s" % 
-                       (NAME, self.FLUSH_INTERVAL, self.MAX_BUFFER_SIZE, self.MAX_FLUSH_SIZE))
+    def __init__(self, formatter):
+        collectd.debug("%s.BaseWriter.__init__: formatter=%s, FLUSH_INTERVAL=%s, MAX_BUFFER_SIZE=%s, MAX_FLUSH_SIZE=%s" % 
+                       (NAME, formatter, self.FLUSH_INTERVAL, self.MAX_BUFFER_SIZE, self.MAX_FLUSH_SIZE))
 
         threading.Thread.__init__(self)
 
         self.buffer = queue.Queue(maxsize=self.MAX_BUFFER_SIZE)
+        self.formatter = formatter
 
 
     def shutdown(self):
@@ -108,10 +218,6 @@ class BaseWriter(threading.Thread):
             collectd.notice("%s %s output buffer full" % (NAME,self))
 
 
-    def encode_to_json(self, items):
-        return json.dumps(items)
-
-
     def run(self):
         collectd.debug("%s.BaseWriter.run" %(NAME))
         while True:
@@ -128,48 +234,94 @@ class BaseWriter(threading.Thread):
                         items.append(item)
                     
                     if items:
-                        self.flush(self.encode_to_json(items))
+                        message = self.formatter.format(items)
+                        self.flush(message)
 
                 except queue.Empty:
                     break
 
             if items:
-                self.flush(self.encode_to_json(items))
+                message = self.formatter.format(items)
+                self.flush(message)
 
-        
 
 class UdpWriter(BaseWriter):
     """
     Send JSON inside UDP packet.
     """
 
-    FLUSH_INTERVAL = 5.0
+    FLUSH_INTERVAL = 15.0
     """Collect multiple values."""
 
     MAX_FLUSH_SIZE = 30
     """Fit MAX_FLUSH_SIZE values into a single UDP packet."""
 
-    def __init__(self, host, port, interface=None, ttl=None):
-        collectd.debug("%s.UdpWriter.__init__: host=%s, port=%s, interface=%s, ttl=%s" % (NAME, host, port, interface, ttl))
+    def __init__(self, formatter, *args, **kwargs):
+        collectd.debug("%s.UdpWriter.__init__: formatter=%s, *args=%s, **kwargs=%s" % (NAME, formatter, args, kwargs))
 
-        super(UdpWriter, self).__init__()
+        super(UdpWriter, self).__init__(formatter)
 
-        self.host = host
-        self.port = port
-        self.interface = interface
-        self.ttl = ttl
+        # Server "host" "port" "interface" "ttl"
+        # Server "host" "port" "ttl" "interface"
+        #
+        self.host = None
+        self.port = None
+        self.interface = None
+        self.ttl = None
+
+
+        # host 
+        #
+        try:
+            self.host = args[0]
+        except IndexError:
+            collectd.notice("%s configuration error: host missing" % (NAME))
+            raise
+
+
+        # port
+        #
+        try:
+            self.port = int(args[1])
+        except IndexError:
+            collectd.notice("%s configuration error: port missing for host %s" % (NAME, self.host))
+            raise
+        except ValueError:
+            collectd.notice("%s configuration error: invalid port for host %s" % (NAME, self.host))
+            raise
+
+
+        # interface/ttl 
+        #
+        try:
+            self.ttl = int(args[2])
+        except ValueError:
+            self.interface = args[2]
+        except IndexError:
+            pass
+
+
+        # interface/ttl 
+        #
+        try:
+            self.ttl = int(args[3])
+        except ValueError:
+            self.interface = args[3]
+        except IndexError:
+            pass
+
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        if interface:
+        if self.interface:
             # Crude test to distinguish between interface names and IP addresses.
             interface_ip = None
             try:
-                if socket.gethostbyname(interface) == interface:
-                    interface_ip = interface
+                if socket.gethostbyname(self.interface) == self.interface:
+                    interface_ip = self.interface
             except socket.gaierror:
                 try:
                     import netifaces
-                    interface_ip = netifaces.ifaddresses(interface)[0]['addr']
+                    interface_ip = netifaces.ifaddresses(self.interface)[0]['addr']
                 except (ImportError, OSError, ValueError), msg:
                     collectd.notice("%s error setting interface: %s" % (NAME, msg))
 
@@ -183,12 +335,12 @@ class UdpWriter(BaseWriter):
                 self.interface = '<invalid>'
                 
 
-        if ttl:
+        if self.ttl:
             try:
-                self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
+                self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.ttl)
             except socket.error, msg:
-                collectd.notice("%s error setting TTL to %d for host %s port %d: %s" % 
-                                 (NAME, ttl, self.host, self.port, msg))
+                collectd.notice("%s error setting TTL to %d for host %s port %s: %s" % 
+                                 (NAME, self.ttl, self.host, self.port, msg))
                 # Fudge self.ttl to make self.__repr__() look better
                 self.ttl = '<invalid>'
 
@@ -196,7 +348,7 @@ class UdpWriter(BaseWriter):
         try:
             collectd.debug("%s.UdpWriter.flush: %s:%s %s" % (NAME, self.host, self.port, message))
             self.sock.sendto(message, (self.host, self.port))
-        except socket.error, msg:
+        except (TypeError, socket.error), msg:
             collectd.warning("%s error sending to host %s port %d: %s" %
                              (NAME, self.host, self.port, msg))
 
@@ -210,7 +362,8 @@ class UdpWriter(BaseWriter):
 
     
     def __repr__(self):
-        return "UdpWriter(host=%s, port=%d, interface=%s, ttl=%s, sock=%s)" % (self.host, self.port, self.interface, self.ttl, self.sock) 
+        return "UdpWriter(host=%s, port=%s, interface=%s, ttl=%s, sock=%s)" % \
+                (self.host, self.port, self.interface, self.ttl, self.sock)
 
 
 def read_types_db(path_to_typesdb):
@@ -279,6 +432,17 @@ def configure_callback(config):
         key = node.key.lower()
         collectd.debug("%s.configure_callback: key=%s values=%s" % (NAME, key, node.values))
 
+
+        # Try to extract format
+        #
+        try:
+            formatter = FORMATTER_MAP[node.values[0].lower()]()
+            args = node.values[1:]
+        except (KeyError):
+            formatter = DEFAULT_FORMATTER()
+            args = node.values
+        
+
         if key == 'typesdb':
             try:
                 TYPES_DB.append(node.values[0])
@@ -287,63 +451,14 @@ def configure_callback(config):
                 continue
 
         elif key == 'udp':
-
-            writer_class = UdpWriter
-
-            # Server "host" "port" "interface" "ttl"
-            # Server "host" "port" "ttl" "interface"
-            #
-            interface = None
-            ttl = None
-
-
-            # host 
-            #
             try:
-                host = node.values[0]
-            except IndexError:
-                collectd.notice("%s configuration error: host missing" % (NAME))
-                continue
-
-
-            # port
-            #
-            try:
-                port = int(node.values[1])
-            except IndexError:
-                collectd.notice("%s configuration error: port missing for host %s" % (NAME, host))
-                continue
-            except ValueError:
-                collectd.notice("%s configuration error: invalid port for host %s" % (NAME, host))
-                continue
-
-
-            # interface/ttl 
-            #
-            try:
-                ttl = int(node.values[2])
-            except ValueError:
-                interface = node.values[2]
-            except IndexError:
+                WRITERS.append(UdpWriter(formatter, *args))
+            except:
                 pass
-
-
-            # interface/ttl 
-            #
-            try:
-                ttl = int(node.values[3])
-            except ValueError:
-                interface = node.values[3]
-            except IndexError:
-                pass
-
-
-            WRITERS.append(writer_class(host, port, interface, ttl))
 
         else:
             collectd.notice("%s configuration error: unknown key %s" % (NAME, key))
             continue
-            
 
 
     collectd.debug("%s.configure_callback: TYPES_DB=%s" % (NAME, TYPES_DB))
@@ -373,92 +488,27 @@ def shutdown_callback():
         writer.shutdown()
 
 
-def write_callback(values):
+def write_callback(values_object):
     """
-    Write values to all `WRITERS` in JSON.
+    Pass values_object to all `WRITERS`.
 
     :param values: Instance of `collectd.Values`.
 
     An example of `values` is shown below. It may also contain `plugin_instance`
-    and `type_instance` attributes.
+    and `type_instance` attributes. The `dsname`, `dstype`, `dsmin` and
+    `dsmax` fields are are not present in `collectd.Values`. They are
+    added in the `BaseFormatter.convert_values_to_dict()` method if possible.
 
       collectd.Values(type='load', plugin='load', host='localhost', time=1432083347.3517618,
                       interval=300.0, values=[0.0, 0.01, 0.050000000000000003])
 
     """
 
-    collectd.debug('%s.write_callback: values=%s' % (NAME, values))
+    collectd.debug('%s.write_callback: values_object=%s' % (NAME, values_object))
 
-    # The following attributes must always be there.
-    #
-    try:
-        values_dict = {'time': values.time,
-                       'interval': values.interval,
-                       'host': values.host,
-                       'plugin': values.plugin,
-                       'type': values.type,
-                       'values': [],
-                       'dstypes': [],
-                       'dsnames': []}
-    except AttributeError, msg:
-        collectd.notice("%s values=%s: %s" % (NAME, values, msg))
-        return
-
-
-    # `plugin_instance` and `type_instance` may be present.
-    #
-    try:
-        values_dict['plugin_instance'] = values.plugin_instance
-    except AttributeError:
-        pass
-
-    try:
-        values_dict['type_instance'] = values.type_instance
-    except AttributeError:
-        pass
-
-
-    # Retrieve the data source name and type. This feature has
-    # been added only in October 2014 so it may not be available
-    # in official releases (https://github.com/collectd/collectd/issues/771).
-    #
-    definitions = None
-    try:
-        definitions = collectd.get_dataset(values.type)
-    except AttributeError:
-        #
-        # collectd.get_dataset() is not yet implemented. Try to get
-        # the nformation from TYPES which holds the information
-        # we read from types.db files.
-        #
-        try:
-            definitions = TYPES[values.type]
-        except KeyError:
-            pass
-    except TypeError, msg:
-        pass
-
-
-    # Append the actual values.
-    #
-    for (i, value) in enumerate(values.values):
-        values_dict['values'].append(value)
-
-
-        # File 'dsname' and 'dstype' if available.
-        #
-        if definitions:
-            (dsname, dstype, dsmin, dsmax) = definitions[i]
-            values_dict['dsnames'].append(dsname)
-            values_dict['dstypes'].append(dstype)
-
-    collectd.debug("%s.write_callback: values_dict=%s" % (NAME, values_dict))
-
-
-    for writer in WRITERS:
-        writer.write(values_dict)
-
-
+    with LOCK:
+        for writer in WRITERS:
+            writer.write(values_object)
         
 
 # Register callbacks
@@ -467,3 +517,15 @@ collectd.register_config(configure_callback)
 collectd.register_shutdown(shutdown_callback)
 collectd.register_write(write_callback)
 collectd.register_init(init_callback)
+
+
+WRITER_MAP = {
+    'udp': UdpWriter
+}
+
+FORMATTER_MAP = {
+    'json': JsonFormatter,
+    'keyval': KeyvalFormatter
+}
+
+DEFAULT_FORMATTER = JsonFormatter
