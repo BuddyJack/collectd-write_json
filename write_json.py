@@ -41,10 +41,10 @@ NAME = 'write_json'
 import collectd
 import socket
 import json
-import sys
 import time
 import re
 import threading
+import Queue as queue
 
 LOCK = threading.Lock()
 """Lock for synchronising writers."""
@@ -59,19 +59,106 @@ WRITERS = []
 """List of writers (UdpWriter, ...)."""
 
 
-class UdpWriter(object):
+class BaseWriter(threading.Thread):
+    FLUSH_INTERVAL = 1.0
+    """The interval in seconds between checking and flushing the output buffer."""
+
+    MAX_BUFFER_SIZE = 100
+    """The maximum size of values in the output buffer."""
+
+    MAX_FLUSH_SIZE = MAX_BUFFER_SIZE
+    """The maximum number of values that will be flushed together."""
+
+
+
+    def __init__(self):
+        collectd.debug("%s.BaseWriter.__init__: FLUSH_INTERVAL=%s, MAX_BUFFER_SIZE=%s, MAX_FLUSH_SIZE=%s" % 
+                       (NAME, self.FLUSH_INTERVAL, self.MAX_BUFFER_SIZE, self.MAX_FLUSH_SIZE))
+
+        threading.Thread.__init__(self)
+
+        self.buffer = queue.Queue(maxsize=self.MAX_BUFFER_SIZE)
+
+
+    def shutdown(self):
+        """
+        `shutdown()` will be called by `run()`.
+
+        This can be overridden by a derived class.
+        """
+        pass
+
+    
+    def flush(self, message):
+        """
+        `flush()` will be called by `run()` when the write buffer must be flushed.
+
+        :param message: 
+
+        This must be overridden by a derived class.
+        """
+
+        pass
+
+
+    def write(self, item):
+        try:
+            self.buffer.put_nowait(item)
+        except queue.Full:
+            collectd.notice("%s %s output buffer full" % (NAME,self))
+
+
+    def encode_to_json(self, items):
+        return json.dumps(items)
+
+
+    def run(self):
+        collectd.debug("%s.BaseWriter.run" %(NAME))
+        while True:
+            collectd.debug("%s.%s sleep(%s)" % (NAME, self, self.FLUSH_INTERVAL))
+            time.sleep(self.FLUSH_INTERVAL)
+
+            while True: 
+                try:
+                    items = []
+
+                    while len(items) < self.MAX_FLUSH_SIZE:
+                        item = self.buffer.get_nowait()
+                        collectd.debug("%s.%s item=%s" % (NAME, self, item))
+                        items.append(item)
+                    
+                    if items:
+                        self.flush(self.encode_to_json(items))
+
+                except queue.Empty:
+                    break
+
+            if items:
+                self.flush(self.encode_to_json(items))
+
+        
+
+class UdpWriter(BaseWriter):
     """
     Send JSON inside UDP packet.
     """
 
+    FLUSH_INTERVAL = 5.0
+    """Collect multiple values."""
+
+    MAX_FLUSH_SIZE = 30
+    """Fit MAX_FLUSH_SIZE values into a single UDP packet."""
+
     def __init__(self, host, port, interface=None, ttl=None):
         collectd.debug("%s.UdpWriter.__init__: host=%s, port=%s, interface=%s, ttl=%s" % (NAME, host, port, interface, ttl))
+
+        super(UdpWriter, self).__init__()
+
         self.host = host
         self.port = port
         self.interface = interface
         self.ttl = ttl
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.values_dicts = []
 
         if interface:
             # Crude test to distinguish between interface names and IP addresses.
@@ -83,7 +170,7 @@ class UdpWriter(object):
                 try:
                     import netifaces
                     interface_ip = netifaces.ifaddresses(interface)[0]['addr']
-                except Exception,msg:
+                except (ImportError, OSError, ValueError), msg:
                     collectd.notice("%s error setting interface: %s" % (NAME, msg))
 
             if interface_ip:
@@ -105,17 +192,16 @@ class UdpWriter(object):
                 # Fudge self.ttl to make self.__repr__() look better
                 self.ttl = '<invalid>'
 
-        
-    def write(self, message):
+    def flush(self, message):
         try:
-            collectd.debug("%s.UdpWriter.write: %s:%s %s" % (NAME, self.host, self.port, message))
+            collectd.debug("%s.UdpWriter.flush: %s:%s %s" % (NAME, self.host, self.port, message))
             self.sock.sendto(message, (self.host, self.port))
         except socket.error, msg:
             collectd.warning("%s error sending to host %s port %d: %s" %
                              (NAME, self.host, self.port, msg))
 
         
-    def close(self):
+    def shutdown(self):
         collectd.debug("%s.%s.close()" % (NAME, self))
         try:
             self.sock.close()
@@ -134,7 +220,7 @@ def read_types_db(path_to_typesdb):
     try:
         with open(path_to_typesdb) as fp:
             for line in fp:
-                fields = re.split('[,\s]+', line.strip())
+                fields = re.split(r'[,\s]+', line.strip())
 
                 # Skip comments
                 if fields[0].startswith('#'):
@@ -202,6 +288,8 @@ def configure_callback(config):
 
         elif key == 'udp':
 
+            writer_class = UdpWriter
+
             # Server "host" "port" "interface" "ttl"
             # Server "host" "port" "ttl" "interface"
             #
@@ -250,7 +338,7 @@ def configure_callback(config):
                 pass
 
 
-            WRITERS.append(UdpWriter(host, port, interface, ttl))
+            WRITERS.append(writer_class(host, port, interface, ttl))
 
         else:
             collectd.notice("%s configuration error: unknown key %s" % (NAME, key))
@@ -266,9 +354,23 @@ def configure_callback(config):
         read_types_db(types_db)
 
 
-def shutdown_callback():
+def init_callback(*args):
+    """
+    Start all writer threads.
+    """
+
     for writer in WRITERS:
-        writer.close()
+        writer.daemon = True
+        writer.start()
+
+
+def shutdown_callback():
+    collectd.debug("%s.shutdown_callback" % (NAME))
+
+    # Write ``None`` to all writer threads to signal shutdown.
+    #
+    for writer in WRITERS:
+        writer.shutdown()
 
 
 def write_callback(values):
@@ -354,7 +456,7 @@ def write_callback(values):
 
 
     for writer in WRITERS:
-        writer.write(json.dumps([values_dict]))
+        writer.write(values_dict)
 
 
         
@@ -364,3 +466,4 @@ def write_callback(values):
 collectd.register_config(configure_callback)
 collectd.register_shutdown(shutdown_callback)
 collectd.register_write(write_callback)
+collectd.register_init(init_callback)
