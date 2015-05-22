@@ -172,7 +172,7 @@ class BaseWriter(threading.Thread):
     FLUSH_INTERVAL = 1.0
     """The interval in seconds between checking and flushing the output buffer."""
 
-    MAX_BUFFER_SIZE = 100
+    MAX_BUFFER_SIZE = 1000
     """The maximum size of values in the output buffer."""
 
     MAX_FLUSH_SIZE = MAX_BUFFER_SIZE
@@ -250,11 +250,11 @@ class UdpWriter(BaseWriter):
     Send JSON inside UDP packet.
     """
 
-    FLUSH_INTERVAL = 15.0
+    FLUSH_INTERVAL = 1.0
     """Collect multiple values."""
 
-    MAX_FLUSH_SIZE = 30
-    """Fit MAX_FLUSH_SIZE values into a single UDP packet."""
+    MAX_FLUSH_SIZE = 3
+    """Fit MAX_FLUSH_SIZE values into a single 1500 bytes UDP packet."""
 
     def __init__(self, formatter, *args, **kwargs):
         collectd.debug("%s.UdpWriter.__init__: formatter=%s, *args=%s, **kwargs=%s" % (NAME, formatter, args, kwargs))
