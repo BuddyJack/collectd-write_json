@@ -67,11 +67,10 @@ expected.
 Output formats
 --------------
 
-JSON format
-~~~~~~~~~~~
+### JSON format
 
 The JSON encoding follows the [Collectd JSON](https://collectd.org/wiki/index.php/JSON) structure
-(the ````min``` and ```max``` information is not included in the example shown on the
+(the ```min``` and ```max``` information is not included in the example shown on the
 Collectd web site but they could be easily added as additional fields).
 ```
 [
@@ -121,24 +120,19 @@ section has ```TypesDB``` entries for the data type.
 Individual JSON structures will be delimited by newline ```\n``` if they are emitted
 together.
 
-Other formats
-~~~~~~~~~~~~~
-
+### Other formats
 Despite it's name ```write_json``` has been extended to support other output
 formats. Currently key-value pairs and CSV have been implemented. Examples:
-
 ```
 time=1432287744.65 host="myhost" plugin="interface" plugin_instance="eth2" type="if_octets" \
   type_instance="" interval=1078853632 value=0 dsname="tx" dstype="derive" dsmin=0.0 dsmax=None
 ```
-
 ```
 1432241499.14,“localhost”,”load”,””,”load”,””,5.0,0.61,”midterm”,”gauge”,0.0,5000.0
 ```
 
 Future
 ------
-
 Currently only sending data as UDP packets has been implemented. The plugin could be 
 extended to write JSON data by different methods; TCP, files, UNIX sockets, databases,
 and so forth.
