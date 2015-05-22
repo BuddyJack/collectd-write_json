@@ -4,9 +4,9 @@ Collectd write_json plugin
 *```write_json``` is currently under development. There is no official release yet.* 
 
 The ```write_json``` plugin for [collectd](http://collectd.org) sends data 
-over the network in [JSON](http://www.json.org/) format. The main purpose
-is to be able to send Collectd data to third-party systems in an easily
-parseable format.
+over the network in [JSON](http://www.json.org/) format although other output formats 
+are also possible. The main purpose is to be able to send Collectd data to third-party 
+systems in an easily parseable format.
 
 The plugin is implemented as a 
 Collectd [Python plugin](http://collectd.org/documentation/manpages/collectd-python.5.shtml).
@@ -64,8 +64,11 @@ expected.
     </Plugin>
 ```
 
+Output formats
+--------------
+
 JSON format
------------
+~~~~~~~~~~~
 
 The JSON encoding follows the [Collectd JSON](https://collectd.org/wiki/index.php/JSON) structure
 (the ````min``` and ```max``` information is not included in the example shown on the
@@ -117,6 +120,21 @@ section has ```TypesDB``` entries for the data type.
 ```
 Individual JSON structures will be delimited by newline ```\n``` if they are emitted
 together.
+
+Other formats
+~~~~~~~~~~~~~
+
+Despite it's name ```write_json``` has been extended to support other output
+formats. Currently key-value pairs and CSV have been implemented. Examples:
+
+```
+time=1432287744.65 host="myhost" plugin="interface" plugin_instance="eth2" type="if_octets" \
+  type_instance="" interval=1078853632 value=0 dsname="tx" dstype="derive" dsmin=0.0 dsmax=None
+```
+
+```
+1432241499.14,“localhost”,”load”,””,”load”,””,5.0,0.61,”midterm”,”gauge”,0.0,5000.0
+```
 
 Future
 ------
