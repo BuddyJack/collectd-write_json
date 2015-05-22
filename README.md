@@ -136,13 +136,13 @@ Writers
 ```write_json``` includes several "writer" implementations. In fact, it should probably be renamed
 altogether, e.g. ```write_???```.
 * Sending data to remote hosts as ```UDP``` packets including multicast.
-* Sending data to remote hosts in ```TCP``` connections [not yet implemented].
+* Sending data to remote hosts in ```TCP``` connections *[not yet implemented]*.
 * Writing data to files (```File```) that may be rotated automatically (```RotatingFile``` and
-  ```TimedRotatingFile```) [not yet implemented].
-* Writing to Unix domain sockets (```UDS```) [not yet implemented].
-* Messaging services: ```ZeroMQ``` and ```nanomsg``` (requires the respective libraries).
+  ```TimedRotatingFile```) *[not yet implemented]*.
+* Writing to Unix domain sockets (```UDS```) *[not yet implemented]*.
+* Messaging services: ```ZeroMQ``` and ```nanomsg``` (requires the respective libraries) *[not yet implemented]*.
 * Inserting into a database: ```SQLite```, ```PostgreSQL``` and ```MySQL``` (requires SQLAlchemy
-  and the respective database drivers).
+  and the respective database drivers) *[not yet implemented]*.
 
 Future
 ------
