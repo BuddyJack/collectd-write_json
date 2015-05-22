@@ -122,7 +122,7 @@ together.
 
 ### Other formats
 Despite it's name ```write_json``` has been extended to support other output
-formats. Currently key-value pairs and CSV have been implemented. Examples:
+formats. Currently key-value pairs and CSV have been implemented.
 ```
 time=1432287744.65 host="myhost" plugin="interface" plugin_instance="eth2" type="if_octets" \
   type_instance="" interval=1078853632 value=0 dsname="tx" dstype="derive" dsmin=0.0 dsmax=None
@@ -130,6 +130,19 @@ time=1432287744.65 host="myhost" plugin="interface" plugin_instance="eth2" type=
 ```
 1432241499.14,“localhost”,”load”,””,”load”,””,5.0,0.61,”midterm”,”gauge”,0.0,5000.0
 ```
+
+Writers
+-------
+```write_json``` includes several "writer" implementations. In fact, it should probably be renamed
+altogether, e.g. ```write_???```.
+* Sending data to remote hosts as ```UDP``` packets including multicast.
+* Sending data to remote hosts in ```TCP``` connections [not yet implemented].
+* Writing data to files (```File```) that may be rotated automatically (```RotatingFile``` and
+  ```TimedRotatingFile```) [not yet implemented].
+* Writing to Unix domain sockets (```UDS```) [not yet implemented].
+* Messaging services: ```ZeroMQ``` and ```nanomsg``` (requires the respective libraries).
+* Inserting into a database: ```SQLite```, ```PostgreSQL``` and ```MySQL``` (requires SQLAlchemy
+  and the respective database drivers).
 
 Future
 ------
