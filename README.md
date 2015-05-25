@@ -3,7 +3,7 @@ Collectd write_json plugin
 
 *This repository is obsolete as the ```write_json``` project is now included in the 
 [collectd-plugins](https://github.com/mjuenema/collectd-plugins) project. Any content
-will be removed once I have fully integrated ```write_json``` into ```collectd-plugins```.
+will be removed once I have fully integrated ```write_json``` into ```collectd-plugins```.*
 
 The ```write_json``` plugin for [collectd](http://collectd.org) sends data 
 over the network in [JSON](http://www.json.org/) format although other output formats 
